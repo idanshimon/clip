@@ -10,25 +10,24 @@ Works on **macOS**, **Linux**, and **Windows**.
 
 ## Install
 
-### macOS / Linux
+### One-liner (macOS / Linux)
 
 ```bash
-git clone https://github.com/YOUR_USER/clip.git
+curl -fsSL https://raw.githubusercontent.com/idanhimon/clip/main/install.sh | sudo bash
+```
+
+To install to a custom prefix:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/idanhimon/clip/main/install.sh | sudo bash -s -- /custom/prefix
+```
+
+### From source (macOS / Linux)
+
+```bash
+git clone https://github.com/idanhimon/clip.git
 cd clip
 sudo ./install.sh
-```
-
-This copies `clip` to `/usr/local/bin`. To install elsewhere:
-
-```bash
-./install.sh /custom/prefix
-```
-
-Or just add it manually:
-
-```bash
-cp clip /somewhere/in/your/PATH/
-chmod +x /somewhere/in/your/PATH/clip
 ```
 
 ### Linux prerequisites
