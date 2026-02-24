@@ -43,11 +43,23 @@ sudo apt install xclip
 sudo dnf install xclip
 ```
 
-### Windows
+### Windows (Batch)
 
 Copy `clip.bat` to a folder in your `PATH` (e.g. `C:\Windows` or a custom bin directory).
 
 > **Note:** Windows has a built-in `clip.exe`. This tool's batch script calls `clip.exe` internally, so name the batch file something else (e.g. `clipfile.bat`) if there's a conflict.
+
+### PowerShell (Cross-platform)
+
+Works on **Windows**, **macOS**, and **Linux** with PowerShell 5.1+ / PowerShell 7+.
+
+```powershell
+# Copy clip.ps1 somewhere in your PATH, then:
+./clip.ps1 <file>
+
+# Or create an alias in your $PROFILE:
+Set-Alias -Name clip -Value "C:\path\to\clip.ps1"
+```
 
 ## Usage
 
