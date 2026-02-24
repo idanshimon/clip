@@ -1,54 +1,251 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="2.0.0"
+REPO_URL="https://raw.githubusercontent.com/idanshimon/clip/main"
+HISTORY_FILE="${HOME}/.clip_history"
+
+# --- Defaults ---
+HEAD_LINES=""
+TAIL_LINES=""
+TRIM=false
+NO_NEWLINE=false
+PREPEND=""
+APPEND=""
+WATCH=false
+PASTE=false
+LIST=false
+EXT_FILTER=""
+STDIN=false
+TARGET=""
 
 show_help() {
-  echo "clip v${VERSION} - Copy file contents to clipboard"
-  echo ""
-  echo "Usage: clip <file|folder>"
-  echo ""
-  echo "If a folder is given, copies the last modified file in it."
-  echo ""
-  echo "Options:"
-  echo "  -h, --help      Show this help message"
-  echo "  -v, --version   Show version"
+  cat <<EOF
+clip v${VERSION} - Copy file contents to clipboard
+
+Usage:
+  clip <file|folder>        Copy file (or last modified file in folder)
+  clip -                    Copy from stdin
+  <cmd> | clip              Pipe into clipboard
+
+Options:
+  -h,  --help               Show this help message
+  -v,  --version            Show version
+  -u,  --update             Self-update to the latest version
+  -p,  --paste              Paste clipboard contents to stdout
+  -n,  --head <N>           Copy only the first N lines
+  -t,  --tail <N>           Copy only the last N lines
+  -w,  --watch              Watch file and re-copy on changes
+       --trim               Strip leading/trailing whitespace
+       --no-newline         Strip trailing newline
+       --prepend <text>     Prepend text before content
+       --append <text>      Append text after content
+       --ext <.ext>         Filter folder by extension (e.g. --ext .txt)
+       --list               List folder files by date, pick interactively
+       --history            Show recently clipped files
+EOF
 }
 
-if [ $# -eq 0 ]; then
-  show_help >&2
-  exit 1
-fi
-
-case "$1" in
-  -h|--help)    show_help; exit 0 ;;
-  -v|--version) echo "clip v${VERSION}"; exit 0 ;;
-esac
-
-TARGET="$1"
-
-if [ -d "$TARGET" ]; then
-  case "$(uname -s)" in
-    Darwin*)  TARGET=$(ls -t "$TARGET"/* 2>/dev/null | head -1) ;;
-    *)        TARGET=$(ls -t "$TARGET"/* 2>/dev/null | head -1) ;;
-  esac
-  if [ -z "$TARGET" ] || [ ! -f "$TARGET" ]; then
-    echo "Error: No files found in '$1'" >&2
-    exit 1
+self_update() {
+  SELF="$(realpath "$0")"
+  echo "Checking for updates..."
+  local remote
+  if command -v curl &>/dev/null; then
+    remote=$(curl -fsSL "${REPO_URL}/clip")
+  elif command -v wget &>/dev/null; then
+    remote=$(wget -qO- "${REPO_URL}/clip")
+  else
+    echo "Error: curl or wget is required" >&2; exit 1
   fi
-  echo "→ Selected last modified file: ${TARGET}"
-elif [ ! -f "$TARGET" ]; then
-  echo "Error: '$1' is not a file or folder" >&2
-  exit 1
+  REMOTE_VERSION=$(echo "$remote" | grep '^VERSION=' | head -1 | cut -d'"' -f2)
+  if [ "$REMOTE_VERSION" = "$VERSION" ]; then
+    echo "✓ Already up to date (v${VERSION})"; exit 0
+  fi
+  echo "Updating clip v${VERSION} → v${REMOTE_VERSION}..."
+  TMP=$(mktemp)
+  echo "$remote" > "$TMP"
+  chmod +x "$TMP"
+  mv "$TMP" "$SELF"
+  echo "✓ Updated to v${REMOTE_VERSION}"
+}
+
+copy_to_clipboard() {
+  case "$(uname -s)" in
+    Darwin*)  pbcopy ;;
+    Linux*)   xclip -selection clipboard 2>/dev/null \
+              || xsel --clipboard 2>/dev/null \
+              || { echo "Error: Install xclip or xsel" >&2; exit 1; } ;;
+    *)        echo "Error: Unsupported OS '$(uname -s)'" >&2; exit 1 ;;
+  esac
+}
+
+paste_from_clipboard() {
+  case "$(uname -s)" in
+    Darwin*)  pbpaste ;;
+    Linux*)   xclip -selection clipboard -o 2>/dev/null \
+              || xsel --clipboard --output 2>/dev/null \
+              || { echo "Error: Install xclip or xsel" >&2; exit 1; } ;;
+    *)        echo "Error: Unsupported OS '$(uname -s)'" >&2; exit 1 ;;
+  esac
+}
+
+log_history() {
+  local file="$1"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') ${file}" >> "$HISTORY_FILE"
+  # Keep last 50 entries
+  if [ -f "$HISTORY_FILE" ]; then
+    tail -50 "$HISTORY_FILE" > "${HISTORY_FILE}.tmp" && mv "${HISTORY_FILE}.tmp" "$HISTORY_FILE"
+  fi
+}
+
+show_history() {
+  if [ ! -f "$HISTORY_FILE" ]; then
+    echo "No clip history yet."
+    exit 0
+  fi
+  echo "Recent clips:"
+  cat "$HISTORY_FILE" | tail -20
+  exit 0
+}
+
+resolve_folder() {
+  local dir="$1"
+  local pattern="*"
+  [ -n "$EXT_FILTER" ] && pattern="*${EXT_FILTER}"
+
+  if $LIST; then
+    echo "Files in '${dir}' (newest first):" >&2
+    local files=()
+    while IFS= read -r f; do
+      [ -f "$f" ] && files+=("$f")
+    done < <(ls -t "$dir"/$pattern 2>/dev/null)
+    if [ ${#files[@]} -eq 0 ]; then
+      echo "Error: No matching files found in '$dir'" >&2; exit 1
+    fi
+    local i=1
+    for f in "${files[@]}"; do
+      echo "  $i) $(basename "$f")" >&2
+      i=$((i + 1))
+    done
+    echo -n "Select [1]: " >&2
+    read -r choice
+    choice=${choice:-1}
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt ${#files[@]} ] 2>/dev/null; then
+      echo "Error: Invalid selection" >&2; exit 1
+    fi
+    TARGET="${files[$((choice - 1))]}"
+  else
+    TARGET=$(ls -t "$dir"/$pattern 2>/dev/null | head -1)
+    if [ -z "$TARGET" ] || [ ! -f "$TARGET" ]; then
+      echo "Error: No matching files found in '$dir'" >&2; exit 1
+    fi
+  fi
+  echo "→ Selected: ${TARGET}" >&2
+}
+
+process_content() {
+  local content="$1"
+
+  if [ -n "$HEAD_LINES" ]; then
+    content=$(echo "$content" | head -n "$HEAD_LINES")
+  fi
+  if [ -n "$TAIL_LINES" ]; then
+    content=$(echo "$content" | tail -n "$TAIL_LINES")
+  fi
+  if $TRIM; then
+    content=$(echo "$content" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+  fi
+  if [ -n "$PREPEND" ]; then
+    content="${PREPEND}"$'\n'"${content}"
+  fi
+  if [ -n "$APPEND" ]; then
+    content="${content}"$'\n'"${APPEND}"
+  fi
+  if $NO_NEWLINE; then
+    printf '%s' "$content"
+  else
+    echo "$content"
+  fi
+}
+
+# --- Parse args ---
+if [ $# -eq 0 ] && [ -t 0 ]; then
+  show_help >&2; exit 1
 fi
 
-case "$(uname -s)" in
-  Darwin*)  cat "$TARGET" | pbcopy ;;
-  Linux*)   cat "$TARGET" | xclip -selection clipboard 2>/dev/null \
-            || cat "$TARGET" | xsel --clipboard 2>/dev/null \
-            || { echo "Error: Install xclip or xsel (e.g. sudo apt install xclip)" >&2; exit 1; } ;;
-  *)        echo "Error: Unsupported OS '$(uname -s)'" >&2; exit 1 ;;
-esac
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)       show_help; exit 0 ;;
+    -v|--version)    echo "clip v${VERSION}"; exit 0 ;;
+    -u|--update)     self_update; exit 0 ;;
+    -p|--paste)      PASTE=true; shift ;;
+    -n|--head)       HEAD_LINES="$2"; shift 2 ;;
+    -t|--tail)       TAIL_LINES="$2"; shift 2 ;;
+    -w|--watch)      WATCH=true; shift ;;
+    --trim)          TRIM=true; shift ;;
+    --no-newline)    NO_NEWLINE=true; shift ;;
+    --prepend)       PREPEND="$2"; shift 2 ;;
+    --append)        APPEND="$2"; shift 2 ;;
+    --ext)           EXT_FILTER="$2"; shift 2 ;;
+    --list)          LIST=true; shift ;;
+    --history)       show_history ;;
+    -)               STDIN=true; shift ;;
+    -*)              echo "Error: Unknown option '$1'" >&2; exit 1 ;;
+    *)               TARGET="$1"; shift ;;
+  esac
+done
 
-lines=$(wc -l < "$TARGET" | tr -d ' ')
+# --- Paste mode ---
+if $PASTE; then
+  paste_from_clipboard
+  exit 0
+fi
+
+# --- Stdin mode (pipe or explicit -) ---
+if $STDIN || [ ! -t 0 ]; then
+  content=$(cat)
+  processed=$(process_content "$content")
+  printf '%s' "$processed" | copy_to_clipboard
+  lines=$(echo "$content" | wc -l | tr -d ' ')
+  echo "✓ Copied ${lines} lines from stdin to clipboard"
+  exit 0
+fi
+
+# --- Need a target from here ---
+if [ -z "$TARGET" ]; then
+  echo "Error: No file or folder specified" >&2; exit 1
+fi
+
+# --- Resolve folder ---
+if [ -d "$TARGET" ]; then
+  resolve_folder "$TARGET"
+elif [ ! -f "$TARGET" ]; then
+  echo "Error: '$TARGET' is not a file or folder" >&2; exit 1
+fi
+
+# --- Watch mode ---
+if $WATCH; then
+  echo "Watching '${TARGET}' for changes (Ctrl+C to stop)..."
+  LAST_HASH=""
+  while true; do
+    HASH=$(md5sum "$TARGET" 2>/dev/null || md5 -q "$TARGET" 2>/dev/null || echo "")
+    if [ "$HASH" != "$LAST_HASH" ]; then
+      content=$(cat "$TARGET")
+      processed=$(process_content "$content")
+      printf '%s' "$processed" | copy_to_clipboard
+      lines=$(echo "$content" | wc -l | tr -d ' ')
+      echo "✓ [$(date '+%H:%M:%S')] Copied ${lines} lines from '${TARGET}'"
+      log_history "$TARGET"
+      LAST_HASH="$HASH"
+    fi
+    sleep 1
+  done
+fi
+
+# --- Standard copy ---
+content=$(cat "$TARGET")
+processed=$(process_content "$content")
+printf '%s' "$processed" | copy_to_clipboard
+lines=$(echo "$content" | wc -l | tr -d ' ')
 echo "✓ Copied ${lines} lines from '${TARGET}' to clipboard"
+log_history "$TARGET"
