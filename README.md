@@ -13,19 +13,19 @@ Works on **macOS**, **Linux**, and **Windows**.
 ### One-liner (macOS / Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/idanhimon/clip/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/idanshimon/clip/main/install.sh | sudo bash
 ```
 
 To install to a custom prefix:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/idanhimon/clip/main/install.sh | sudo bash -s -- /custom/prefix
+curl -fsSL https://raw.githubusercontent.com/idanshimon/clip/main/install.sh | sudo bash -s -- /custom/prefix
 ```
 
 ### From source (macOS / Linux)
 
 ```bash
-git clone https://github.com/idanhimon/clip.git
+git clone https://github.com/idanshimon/clip.git
 cd clip
 sudo ./install.sh
 ```
